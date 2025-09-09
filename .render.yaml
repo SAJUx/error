@@ -1,10 +1,10 @@
 services:
-  - type: worker  # Important: worker, not web
+  - type: worker
     name: gpt-telegram-bot
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
-    pythonVersion: 3.11  # Match your bot's Python version
+    pythonVersion: 3.13  # PTB v13 compatible with 3.13
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         value: "YOUR_TELEGRAM_BOT_TOKEN"
