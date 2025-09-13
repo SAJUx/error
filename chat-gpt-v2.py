@@ -1,41 +1,99 @@
 import os
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-from openai import OpenAI
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import openai
 
-# 🔹 Env variables
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-if not OPENAI_API_KEY or not TELEGRAM_BOT_TOKEN:
-    raise ValueError("Missing environment variables!")
+# Configuration - Set these as environment variables on Render
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
-# 🔹 OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI
+openai.api_key = OPENAI_API_KEY
 
-# 🔹 Handlers
-def start(update, context):
-    update.message.reply_text("🤖 GPT Bot Online! /help লিখে দেখো কী করতে পারো।")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a welcome message when the command /start is issued."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"Hi {user.first_name}! I'm a ChatGPT-powered bot. "
+        "Send me a message and I'll respond with AI-generated content."
+    )
 
-def help_command(update, context):
-    update.message.reply_text("📌 Commands: /start, /help. Chat by sending any message.")
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message when the command /help is issued."""
+    help_text = """
+    Available commands:
+    /start - Start the bot
+    /help - Show this help message
+    /chat <message> - Chat with the AI
+    
+    Or simply send a message to chat with the AI directly.
+    """
+    await update.message.reply_text(help_text)
 
-def chat(update, context):
-    user_text = update.message.text
+async def chat_with_gpt(prompt):
+    """Send prompt to ChatGPT API and return the response."""
     try:
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=user_text
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500,
+            temperature=0.7
         )
-        update.message.reply_text(response.output_text)
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        update.message.reply_text("❌ দুঃখিত, কিছু সমস্যা হয়েছে। পরে আবার চেষ্টা করো.")
+        logger.error(f"Error in ChatGPT API call: {e}")
+        return "Sorry, I'm having trouble connecting to the AI service right now."
 
-# 🔹 Main
-updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
-dp = updater.dispatcher
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(CommandHandler("help", help_command))
-dp.add_handler(MessageHandler(Filters.text & ~Filters.command, chat))
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming messages and respond using ChatGPT."""
+    user_message = update.message.text
+    
+    # Show typing action while processing
+    await update.message.chat.send_action(action="typing")
+    
+    # Get response from ChatGPT
+    response = await chat_with_gpt(user_message)
+    
+    # Send the response
+    await update.message.reply_text(response)
 
-updater.start_polling()
-updater.idle()
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log errors and send a friendly message."""
+    logger.error(f"Update {update} caused error {context.error}")
+    
+    if update and update.message:
+        await update.message.reply_text(
+            "An error occurred while processing your message. Please try again later."
+        )
+
+def main():
+    """Start the bot."""
+    if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
+        logger.error("Environment variables not set properly")
+        return
+    
+    # Create the Application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Add error handler
+    application.add_error_handler(error_handler)
+    
+    # Start the Bot
+    logger.info("Bot is starting...")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
