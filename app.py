@@ -4,7 +4,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import openai
 from flask import Flask, request
-import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -13,21 +12,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration - Set these as environment variables on Render
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+# Configuration - Set these as environment variables
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '').strip()
 
 # Validate environment variables
 if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
     logger.error("Environment variables not set properly")
     exit(1)
 
-# Clean up API keys
-TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.strip()
-OPENAI_API_KEY = OPENAI_API_KEY.strip()
-
-# Initialize OpenAI client
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI
+openai.api_key = OPENAI_API_KEY
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -57,7 +52,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def chat_with_gpt(prompt):
     """Send prompt to ChatGPT API and return the response."""
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
@@ -102,7 +97,7 @@ async def set_webhook():
 async def webhook():
     """Receive updates from Telegram via webhook"""
     try:
-        data = await request.get_json()
+        data = request.get_json()
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
         return 'OK'
@@ -122,14 +117,11 @@ async def set_webhook_route():
     else:
         return 'Error setting webhook!', 500
 
-# App start হওয়ার সময় webhook set করুন
-@app.before_request
-async def before_first_request():
-    if not hasattr(app, 'webhook_set'):
-        await set_webhook()
-        app.webhook_set = True
-
 if __name__ == '__main__':
+    # Initialize webhook when starting
+    import asyncio
+    asyncio.run(set_webhook())
+    
     # Start Flask app
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
