@@ -2,8 +2,8 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from flask import Flask, request
 import openai
+from flask import Flask, request
 
 # Configure logging
 logging.basicConfig(
@@ -12,28 +12,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
+# Configuration - Set these as environment variables on Render
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-RENDER_URL = os.environ.get('RENDER_EXTERNAL_URL')
 
-# Clean up API key
-if OPENAI_API_KEY:
-    OPENAI_API_KEY = OPENAI_API_KEY.strip()
-    OPENAI_API_KEY = ''.join(char for char in OPENAI_API_KEY if char.isprintable())
-
-# Validate API keys
-if not TELEGRAM_BOT_TOKEN:
-    logger.error("TELEGRAM_BOT_TOKEN not set!")
+# Validate environment variables
+if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
+    logger.error("Environment variables not set properly")
     exit(1)
 
-if not OPENAI_API_KEY:
-    logger.error("OPENAI_API_KEY not set!")
-    exit(1)
-
-if not OPENAI_API_KEY.startswith('sk-'):
-    logger.error("OPENAI_API_KEY doesn't look valid! It should start with 'sk-'")
-    exit(1)
+# Clean up API keys
+TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.strip()
+OPENAI_API_KEY = OPENAI_API_KEY.strip()
 
 # Initialize OpenAI
 openai.api_key = OPENAI_API_KEY
@@ -97,28 +87,45 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_m
 
 # Set up webhook
 async def set_webhook():
-    if RENDER_URL:
-        await application.bot.set_webhook(url=f"{RENDER_URL}/telegram-webhook")
-        logger.info("Webhook set successfully")
-    else:
-        logger.error("RENDER_EXTERNAL_URL not set!")
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')}/telegram-webhook"
+    try:
+        await application.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to: {webhook_url}")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting webhook: {e}")
+        return False
 
 # Flask route for webhook
 @app.route('/telegram-webhook', methods=['POST'])
 async def webhook():
     """Receive updates from Telegram via webhook"""
-    update = Update.de_json(await request.get_json(), application.bot)
-    await application.process_update(update)
-    return 'OK'
+    try:
+        update = Update.de_json(await request.get_json(), application.bot)
+        await application.process_update(update)
+        return 'OK'
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+        return 'Error', 500
 
 @app.route('/')
 def home():
     return 'Telegram ChatGPT Bot is running!'
 
+@app.route('/set-webhook')
+async def set_webhook_route():
+    success = await set_webhook()
+    if success:
+        return 'Webhook set successfully!'
+    else:
+        return 'Error setting webhook!', 500
+
+# App start হওয়ার সময় webhook set করুন
+@app.before_first_request
+async def on_startup():
+    await set_webhook()
+
 if __name__ == '__main__':
-    # Initialize webhook when starting
-    import asyncio
-    asyncio.run(set_webhook())
-    
     # Start Flask app
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
