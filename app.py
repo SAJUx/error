@@ -1,7 +1,7 @@
 import os
 import logging
-from telegram import Update, Bot
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import openai
 from flask import Flask, request
 
@@ -21,26 +21,24 @@ if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
     logger.error("Environment variables not set properly")
     exit(1)
 
-# Initialize OpenAI
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI client (new API version)
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize Telegram Bot with older version compatible code
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+# Initialize Telegram Application
+application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a welcome message when the command /start is issued."""
     user = update.effective_user
-    update.message.reply_text(
+    await update.message.reply_text(
         f"Hi {user.first_name}! I'm a ChatGPT-powered bot. "
         "Send me a message and I'll respond with AI-generated content."
     )
 
-def help_command(update, context):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
     help_text = """
     Available commands:
@@ -49,45 +47,45 @@ def help_command(update, context):
     
     Or simply send a message to chat with the AI directly.
     """
-    update.message.reply_text(help_text)
+    await update.message.reply_text(help_text)
 
-def chat_with_gpt(prompt):
+async def chat_with_gpt(prompt):
     """Send prompt to ChatGPT API and return the response."""
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
             temperature=0.7
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error in ChatGPT API call: {e}")
         return "Sorry, I'm having trouble connecting to the AI service right now."
 
-def handle_message(update, context):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages and respond using ChatGPT."""
     user_message = update.message.text
     
     # Show typing action while processing
-    context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    await update.message.chat.send_action(action="typing")
     
     # Get response from ChatGPT
-    response = chat_with_gpt(user_message)
+    response = await chat_with_gpt(user_message)
     
     # Send the response
-    update.message.reply_text(response)
+    await update.message.reply_text(response)
 
 # Add handlers
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("help", help_command))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # Set up webhook
-def set_webhook():
+async def set_webhook():
     webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', '')}/webhook"
     try:
-        bot.set_webhook(url=webhook_url)
+        await application.bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook set to: {webhook_url}")
         return True
     except Exception as e:
@@ -96,12 +94,12 @@ def set_webhook():
 
 # Flask route for webhook
 @app.route('/webhook', methods=['POST'])
-def webhook():
+async def webhook():
     """Receive updates from Telegram via webhook"""
     try:
         data = request.get_json()
-        update = Update.de_json(data, bot)
-        dispatcher.process_update(update)
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
         return 'OK'
     except Exception as e:
         logger.error(f"Error processing update: {e}")
@@ -112,8 +110,8 @@ def home():
     return 'Telegram ChatGPT Bot is running! Visit /setwebhook to setup webhook'
 
 @app.route('/setwebhook')
-def set_webhook_route():
-    success = set_webhook()
+async def set_webhook_route():
+    success = await set_webhook()
     if success:
         return 'Webhook set successfully!'
     else:
