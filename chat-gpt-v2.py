@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import openai
 from flask import Flask, request
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -25,8 +26,8 @@ if not TELEGRAM_BOT_TOKEN or not OPENAI_API_KEY:
 TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.strip()
 OPENAI_API_KEY = OPENAI_API_KEY.strip()
 
-# Initialize OpenAI
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI client
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -56,7 +57,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def chat_with_gpt(prompt):
     """Send prompt to ChatGPT API and return the response."""
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=500,
@@ -101,7 +102,8 @@ async def set_webhook():
 async def webhook():
     """Receive updates from Telegram via webhook"""
     try:
-        update = Update.de_json(await request.get_json(), application.bot)
+        data = await request.get_json()
+        update = Update.de_json(data, application.bot)
         await application.process_update(update)
         return 'OK'
     except Exception as e:
@@ -121,9 +123,11 @@ async def set_webhook_route():
         return 'Error setting webhook!', 500
 
 # App start হওয়ার সময় webhook set করুন
-@app.before_first_request
-async def on_startup():
-    await set_webhook()
+@app.before_request
+async def before_first_request():
+    if not hasattr(app, 'webhook_set'):
+        await set_webhook()
+        app.webhook_set = True
 
 if __name__ == '__main__':
     # Start Flask app
